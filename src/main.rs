@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 async fn main() -> anyhow::Result<()> {
     let app = App::new("mikanbako")
         .author("(C) 2021 Manapia.")
+        .version("1.0.0")
         .arg(Arg::new("url")
             .long("url")
             .short('u')
