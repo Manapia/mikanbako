@@ -46,6 +46,11 @@ async fn main() -> anyhow::Result<()> {
 
     // ダウンロード準備
     let connections: usize = matches.value_of("connections").unwrap().parse().unwrap();
+    let connections = if connections <= 10 {
+        connections
+    } else {
+        2
+    };
     let urls = Arc::new(urls);
     let semaphore = Arc::new(Semaphore::new(connections));
     let counter = Arc::new(AtomicUsize::new(0));
