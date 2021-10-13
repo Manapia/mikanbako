@@ -163,7 +163,7 @@ fn create_sequential_download_list<S>(url: S, start: i64, end: i64) -> anyhow::R
         return Err(anyhow!("The value of start must be less than end"));
     }
 
-    let mut urls = Vec::with_capacity((end - start) as usize);
+    let mut urls = Vec::with_capacity((end - start) as usize + 1);
     for i in start..=end {
         let url = url.replace("{}", &i.to_string());
         urls.push(url);
