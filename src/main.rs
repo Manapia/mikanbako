@@ -1,11 +1,11 @@
 use std::{fs, time};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::anyhow;
-use clap::{App, Arg};
+use clap::{App, Arg, ArgMatches};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use percent_encoding::percent_decode_str;
@@ -14,58 +14,23 @@ use tokio::sync::Semaphore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let app = App::new("mikanbako")
-        .author("(C) 2021 Manapia.")
-        .version("1.0.0")
-        .arg(Arg::new("url")
-            .long("url")
-            .short('u')
-            .takes_value(true)
-            .required(true))
-        .arg(Arg::new("start")
-            .long("start")
-            .short('s')
-            .validator(validate_number)
-            .default_value("1"))
-        .arg(Arg::new("end")
-            .long("end")
-            .short('e')
-            .takes_value(true)
-            .validator(validate_number)
-            .required(true))
-        .arg(Arg::new("output")
-            .long("output")
-            .short('o')
-            .default_value("./"))
-        .arg(Arg::new("connections")
-            .long("connections")
-            .short('c')
-            .validator(validate_natural_number)
-            .default_value("2"));
-
+    let app = make_app();
     let matches = app.get_matches();
-
-    // パラメータの取得
-    let url = matches.value_of("url").unwrap();
-    let start: i64 = matches.value_of("start").unwrap().parse().unwrap();
-    let end: i64 = matches.value_of("end").unwrap().parse().unwrap();
-    let output = matches.value_of("output").unwrap();
-    let connections: usize = matches.value_of("connections").unwrap().parse().unwrap();
-
-    if start > end {
-        return Err(anyhow!("The value of start must be less than end"));
-    }
+    validate_matches(&matches)?;
 
     // ダウンロードリストの作成
-    let mut urls = Vec::with_capacity((end - start) as usize);
-    for i in start..=end {
-        let url = url.replace("{}", &i.to_string());
-        urls.push(url);
-    }
+    let urls = if matches.is_present("url") {
+        let url = matches.value_of("url").unwrap();
+        let start = matches.value_of("start").unwrap().parse().unwrap();
+        let end = matches.value_of("end").unwrap().parse().unwrap();
+        create_sequential_download_list(url, start, end)?
+    } else {
+        let filepath = matches.value_of("list").unwrap();
+        create_download_list_from_file(filepath)?
+    };
 
     // 出力先ディレクトリの準備
-    let output_dir = PathBuf::from(output);
-
+    let output_dir = PathBuf::from(matches.value_of("output").unwrap());
     if !output_dir.exists() {
         fs::create_dir_all(&output_dir)?;
     }
@@ -80,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
     main_bar.tick();
 
     // ダウンロード準備
+    let connections: usize = matches.value_of("connections").unwrap().parse().unwrap();
     let urls = Arc::new(urls);
     let semaphore = Arc::new(Semaphore::new(connections));
     let counter = Arc::new(AtomicUsize::new(0));
@@ -123,6 +89,105 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// コマンドライン アプリケーションの初期化
+fn make_app() -> App<'static> {
+    App::new("mikanbako")
+        .author("(C) 2021 Manapia.")
+        .version("1.0.0")
+        .arg(Arg::new("url")
+            .long("url")
+            .short('u')
+            .long_about("The URL that will be the source for generating the serial number. The placeholder {} is replaced with a number.")
+            .takes_value(true))
+        .arg(Arg::new("list")
+            .long("list")
+            .short('l')
+            .about("The path of the file to read the list of URLs")
+            .takes_value(true))
+        .arg(Arg::new("start")
+            .long("start")
+            .short('s')
+            .about("Sequence start number")
+            .validator(validate_number)
+            .default_value("1"))
+        .arg(Arg::new("end")
+            .long("end")
+            .short('e')
+            .about("Sequence end number")
+            .takes_value(true)
+            .validator(validate_number))
+        .arg(Arg::new("output")
+            .long("output")
+            .short('o')
+            .about("The path of the directory where you want to save the file")
+            .default_value("./"))
+        .arg(Arg::new("connections")
+            .long("connections")
+            .short('c')
+            .about("The number of connections to download in parallel")
+            .validator(validate_natural_number)
+            .default_value("2"))
+        .after_help("The end argument is required when the url argument is specified.
+When the argument list is specified, the start and end arguments are ignored.
+If you specify both the url and list arguments, the url is processed.")
+}
+
+/// コマンドライン引数を検証し、エラーを返します。
+fn validate_matches(matches: &ArgMatches) -> anyhow::Result<()> {
+    if matches.is_present("url") {
+        if !matches.is_present("start") {
+            return Err(anyhow!("The argument start is required if the argument url is specified."));
+        }
+        if !matches.is_present("end") {
+            return Err(anyhow!("The argument end is required if the argument url is specified."));
+        }
+    } else if !matches.is_present("list") {
+        return Err(anyhow!("Specify either the url argument or the list argument."));
+    }
+
+    Ok(())
+}
+
+/// 連番の URL リストを作成します。
+fn create_sequential_download_list<S>(url: S, start: i64, end: i64) -> anyhow::Result<Vec<String>>
+    where S: Into<String>
+{
+    let url = url.into();
+
+    if start > end {
+        return Err(anyhow!("The value of start must be less than end"));
+    }
+
+    let mut urls = Vec::with_capacity((end - start) as usize);
+    for i in start..=end {
+        let url = url.replace("{}", &i.to_string());
+        urls.push(url);
+    }
+
+    Ok(urls)
+}
+
+/// 指定したファイルを読み込み、ダウンロードする URL のリストを返します。
+fn create_download_list_from_file(filepath: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
+    let fp = fs::File::open(&filepath.as_ref())?;
+    let mut reader = BufReader::new(fp);
+
+    let mut files = Vec::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        if line.len() != 0 {
+            files.push(line.replace("\r", "").replace("\n", ""));
+        }
+    }
+
+    Ok(files)
+}
+
+/// 指定した URL からデータをダウンロードして、指定したディレクトリに保存します。
 async fn download(
     url: impl Into<String>,
     output_dir: impl AsRef<Path>,
@@ -176,13 +241,14 @@ async fn download(
     Ok(())
 }
 
+/// プログレスバーのスタイルを返します。
 fn create_bar_style() -> ProgressStyle {
     ProgressStyle::default_bar()
         .template("{elapsed_precise} [{bar:40.cyan/blue}] {percent:>3$}% {binary_bytes_per_sec} {bytes} {msg}")
         .progress_chars("=>-")
 }
 
-/// URL からファイル名が特定できない場合にランダムなファイル名を生成します
+/// URL からファイル名が特定できない場合にランダムなファイル名を生成します。
 fn gen_filename() -> anyhow::Result<String> {
     let now = time::SystemTime::now();
     let secs = now.duration_since(time::UNIX_EPOCH)?.as_millis();
@@ -190,6 +256,7 @@ fn gen_filename() -> anyhow::Result<String> {
     Ok(secs.to_string())
 }
 
+/// 渡された文字列を i64 としてパースを試します。
 fn validate_number(v: &str) -> Result<(), String> {
     match v.parse::<i64>() {
         Ok(_) => Ok(()),
@@ -197,6 +264,7 @@ fn validate_number(v: &str) -> Result<(), String> {
     }
 }
 
+/// 渡された文字列を usize としてパースを試します。
 fn validate_natural_number(v: &str) -> Result<(), String> {
     match v.parse::<usize>() {
         Ok(_) => Ok(()),
