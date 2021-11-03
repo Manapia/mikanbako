@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
 fn make_app() -> App<'static> {
     App::new("mikanbako")
         .author("(C) 2021 Manapia.")
-        .version("1.1.1")
+        .version("1.1.2")
         .arg(Arg::new("url")
             .long("url")
             .short('u')
