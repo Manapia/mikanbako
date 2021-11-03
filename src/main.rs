@@ -38,11 +38,8 @@ async fn main() -> anyhow::Result<()> {
     // プログレスバーの準備
     let bars = Arc::new(MultiProgress::new());
 
-    let main_bar = bars.add(ProgressBar::new(urls.len() as u64));
-    main_bar.set_style(ProgressStyle::default_bar()
-        .template("{elapsed_precise} [{bar:40.cyan/blue}] {pos} / {len} {percent:>3$}%")
-        .progress_chars("=>-"));
-    main_bar.tick();
+    let main_bar = Arc::new(bars.add(ProgressBar::new(urls.len() as u64)));
+    main_bar.set_style(create_main_bar_style());
 
     // ダウンロード準備
     let connections: usize = matches.value_of("connections").unwrap().parse().unwrap();
@@ -56,6 +53,21 @@ async fn main() -> anyhow::Result<()> {
     let counter = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::with_capacity(connections);
 
+    // メインバーを更新するスレッドを生成
+    tokio::spawn({
+        let main_bar = main_bar.clone();
+        async move {
+            loop {
+                main_bar.tick();
+                if main_bar.is_finished() {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+        }
+    });
+
+    // ダウンロードジョブを処理するスレッドを生成
     for _ in 0..connections {
         let semaphore = semaphore.clone();
         let counter = counter.clone();
@@ -90,6 +102,8 @@ async fn main() -> anyhow::Result<()> {
     for handle in handles {
         handle.await?;
     }
+
+    main_bar.finish();
 
     Ok(())
 }
@@ -244,6 +258,13 @@ async fn download(
     bar.finish();
 
     Ok(())
+}
+
+/// メイン プログレスバーのスタイルを返します。
+fn create_main_bar_style() -> ProgressStyle {
+    ProgressStyle::default_bar()
+        .template("{elapsed_precise} [{bar:40.cyan/blue}] {pos} / {len} {percent:>3$}%")
+        .progress_chars("=>-")
 }
 
 /// プログレスバーのスタイルを返します。
