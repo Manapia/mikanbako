@@ -263,15 +263,15 @@ async fn download(
 /// メイン プログレスバーのスタイルを返します。
 fn create_main_bar_style() -> ProgressStyle {
     ProgressStyle::default_bar()
-        .template("{elapsed_precise} [{bar:40.cyan/blue}] {pos} / {len} {percent:>3$}%")
-        .progress_chars("=>-")
+        .template("{elapsed_precise} [{bar:40.green}] {pos} / {len} {percent:>3$}%")
+        .progress_chars("= ")
 }
 
 /// プログレスバーのスタイルを返します。
 fn create_bar_style() -> ProgressStyle {
     ProgressStyle::default_bar()
-        .template("{elapsed_precise} [{bar:40.cyan/blue}] {percent:>3$}% {binary_bytes_per_sec} {bytes} {msg}")
-        .progress_chars("=>-")
+        .template("{elapsed_precise} [{bar:40.green}] {percent:>3$}% {binary_bytes_per_sec} {bytes} {msg}")
+        .progress_chars("= ")
 }
 
 /// URL からファイル名が特定できない場合にランダムなファイル名を生成します。
